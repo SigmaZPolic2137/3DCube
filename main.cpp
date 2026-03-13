@@ -83,8 +83,7 @@ static Vector3 RotateXY(const Vector3& Position, float Angle) {
 	};
 }
 
-bool ClipLineNearPlane(Vector3 & A, Vector3 & B, float NearPlane)
-{
+static bool ClipLineNearPlane(Vector3 & A, Vector3 & B, float NearPlane) {
 	if (A.Z >= NearPlane && B.Z >= NearPlane) return true;
 	if (A.Z < NearPlane && B.Z < NearPlane) return false;
 
@@ -115,8 +114,9 @@ struct CameraActions {
 
 	bool MouseLook = false;
 
-	float MouseDeltaX = 0;
-	float MouseDeltaY = 0;
+	Vector2 MouseDelta = {0.0f, 0.0f};
+
+	float Scroll = 0.0f;
 };
 
 struct Camera {
@@ -137,11 +137,16 @@ struct Camera {
 		if (Actions.Down) this -> Position = {this -> Position.X, this -> Position.Y - this -> Speed * (float) DeltaTime, this -> Position.Z};
 
 		if (Actions.MouseLook) {
-			this -> Rotation.X -= Actions.MouseDeltaY * (float) DeltaTime * this -> MouseSensitivity;
-			this -> Rotation.Y += Actions.MouseDeltaX * (float) DeltaTime * this -> MouseSensitivity;
+			this -> Rotation.X -= Actions.MouseDelta.Y * (float) DeltaTime * this -> MouseSensitivity;
+			this -> Rotation.Y += Actions.MouseDelta.X * (float) DeltaTime * this -> MouseSensitivity;
 
-			Actions.MouseDeltaX = 0;
-			Actions.MouseDeltaY = 0;
+			Actions.MouseDelta.X = 0;
+			Actions.MouseDelta.Y = 0;
+		}
+
+		if (Actions.Scroll != 0) {
+			this -> Position = {this -> Position.X, this -> Position.Y, this -> Position.Z + Actions.Scroll * this -> Speed};
+			Actions.Scroll = 0;
 		}
 	}
 };
@@ -165,9 +170,6 @@ struct AppState {
 
 	SDL_Color BackgroundColor = {0, 0, 0, SDL_ALPHA_OPAQUE};
 	SDL_Color ForegroundColor = {120, 0, 180, SDL_ALPHA_OPAQUE};
-
-	bool Fog = false;
-	float Atmosphere = 0.1f;
 
 	float NearClipPlane = 0.05f;
 
@@ -228,8 +230,6 @@ SDL_AppResult SDL_AppEvent(void * App, SDL_Event * Event) {
 			State -> Fullscreen = ToggleFullscreen(State -> Window);
 		}
 
-		// Camera
-
 		if (Keycode == SDLK_W) State -> GlobalCameraActions.Forward = true;
 		if (Keycode == SDLK_S) State -> GlobalCameraActions.Backward = true;
 
@@ -242,8 +242,6 @@ SDL_AppResult SDL_AppEvent(void * App, SDL_Event * Event) {
 
 	if (Event -> type == SDL_EVENT_KEY_UP) {
 		SDL_Keycode Keycode = Event -> key.key;
-
-		// Camera
 
 		if (Keycode == SDLK_W) State -> GlobalCameraActions.Forward = false;
 		if (Keycode == SDLK_S) State -> GlobalCameraActions.Backward = false;
@@ -274,8 +272,11 @@ SDL_AppResult SDL_AppEvent(void * App, SDL_Event * Event) {
 	}
 
 	if (Event -> type == SDL_EVENT_MOUSE_MOTION && State -> GlobalCameraActions.MouseLook) {
-		State -> GlobalCameraActions.MouseDeltaX = Event -> motion.xrel;
-		State -> GlobalCameraActions.MouseDeltaY = Event -> motion.yrel;
+		State -> GlobalCameraActions.MouseDelta = {Event -> motion.xrel, Event -> motion.yrel};
+	}
+
+	if (Event -> type == SDL_EVENT_MOUSE_WHEEL) {
+		State -> GlobalCameraActions.Scroll = Event -> wheel.y;
 	}
 
 	return SDL_APP_CONTINUE;
@@ -336,18 +337,6 @@ SDL_AppResult SDL_AppIterate(void * App) {
 
 			Vector2 WindowedB = ToWindowSpace(ProjectedB, State -> WindowWidth, State -> WindowHeight);
 			Vector2 WindowedA = ToWindowSpace(ProjectedA, State -> WindowWidth, State -> WindowHeight);
-
-			if (State -> Fog) {
-				float Depth = (ShiftedA.Z + ShiftedB.Z) * 0.5f;
-				float Brightness = SDL_clamp(1.0f - Depth * State->Atmosphere, 0.0f, 1.0f);
-
-				SDL_SetRenderDrawColor(State->Renderer,
-					Uint8(State->ForegroundColor.r),
-					Uint8(State->ForegroundColor.g),
-					Uint8(State->ForegroundColor.b),
-					Uint8(Brightness * 255)
-				);
-			}
 
 			SDL_RenderLine(State -> Renderer, WindowedA.X, WindowedA.Y, WindowedB.X, WindowedB.Y);
 		}
