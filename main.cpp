@@ -1,0 +1,371 @@
+#define SDL_MAIN_USE_CALLBACKS 1
+#include <SDL3/SDL.h>
+#include <SDL3/SDL_main.h>
+
+#include <iostream>
+#include <vector>
+
+struct Vector2 {
+	float X, Y;
+};
+
+struct Vector3 {
+	float X, Y, Z;
+};
+
+static bool ToggleFullscreen(SDL_Window * Window) {
+	SDL_WindowFlags Flags = SDL_GetWindowFlags(Window);
+	bool IsFullscreen = Flags & SDL_WINDOW_FULLSCREEN;
+
+	if (!IsFullscreen) {
+		SDL_SetWindowFullscreen(Window, true);
+	} else {
+		SDL_RestoreWindow(Window);
+		SDL_SetWindowFullscreen(Window, false);
+	}
+
+	return !IsFullscreen;
+}
+
+static void SetDrawColor(SDL_Renderer * Renderer, const SDL_Color & Color) {
+	SDL_SetRenderDrawColor(Renderer, Color.r, Color.g, Color.b, Color.a);
+}
+
+static Vector2 ToWindowSpace(const Vector2 & Point, int Width, int Height) {
+	float Scale = (float) SDL_min(Width, Height);
+
+	float OffsetX = (Width - Scale) * 0.5f;
+	float OffsetY = (Height - Scale) * 0.5f;
+
+	return {
+		.X = OffsetX + (Point.X + 1.0f) * 0.5f * Scale,
+		.Y = OffsetY + (1.0f - Point.Y) * 0.5f * Scale,
+	};
+}
+
+static Vector2 ProjectFrom3D(const Vector3 & Position) {
+	return {
+		.X = Position.X / Position.Z,
+		.Y = Position.Y / Position.Z,
+	};
+}
+
+static Vector3 RotateYZ(const Vector3 & Position, float Angle) {
+	const float Cos = SDL_cosf(Angle);
+	const float Sin = SDL_sinf(Angle);
+
+	return {
+		.X = Position.X,
+		.Y = Position.Y * Cos - Position.Z * Sin,
+		.Z = Position.Y * Sin + Position.Z * Cos,
+	};
+}
+
+static Vector3 RotateXZ(const Vector3 & Position, float Angle) {
+	const float Cos = SDL_cosf(Angle);
+	const float Sin = SDL_sinf(Angle);
+
+	return {
+		.X = Position.X * Cos - Position.Z * Sin,
+		.Y = Position.Y,
+		.Z = Position.X * Sin + Position.Z * Cos,
+	};
+}
+
+static Vector3 RotateXY(const Vector3& Position, float Angle) {
+	const float Cos = SDL_cosf(Angle);
+	const float Sin = SDL_sinf(Angle);
+
+	return {
+		.X = Position.X * Cos - Position.Y * Sin,
+		.Y = Position.X * Sin + Position.Y * Cos,
+		.Z = Position.Z,
+	};
+}
+
+bool ClipLineNearPlane(Vector3 & A, Vector3 & B, float NearPlane)
+{
+	if (A.Z >= NearPlane && B.Z >= NearPlane) return true;
+	if (A.Z < NearPlane && B.Z < NearPlane) return false;
+
+	float Alpha = (NearPlane - A.Z) / (B.Z - A.Z);
+
+	Vector3 Intersection = {
+		A.X + Alpha * (B.X - A.X),
+		A.Y + Alpha * (B.Y - A.Y),
+		NearPlane
+	};
+
+	if (A.Z < NearPlane) A = Intersection;
+	else B = Intersection;
+
+	return true;
+}
+
+
+struct CameraActions {
+	bool Forward = false;
+	bool Backward = false;
+
+	bool Right = false;
+	bool Left = false;
+
+	bool Up = false;
+	bool Down = false;
+
+	bool MouseLook = false;
+
+	float MouseDeltaX = 0;
+	float MouseDeltaY = 0;
+};
+
+struct Camera {
+	Vector3 Position = {0, 0, -1.0f};
+	Vector3 Rotation = {0, 0, 0};
+
+	float Speed = 5.0f;
+	float MouseSensitivity = 1.0f;
+
+	void Update(const double & DeltaTime, CameraActions & Actions) {
+		if (Actions.Forward) this -> Position = {this -> Position.X, this -> Position.Y, this -> Position.Z + this -> Speed * (float) DeltaTime};
+		if (Actions.Backward) this -> Position = {this -> Position.X, this -> Position.Y, this -> Position.Z - this -> Speed * (float) DeltaTime};
+
+		if (Actions.Right) this -> Position = {this -> Position.X + this -> Speed * (float) DeltaTime, this -> Position.Y, this -> Position.Z};
+		if (Actions.Left) this -> Position = {this -> Position.X - this -> Speed * (float) DeltaTime, this -> Position.Y, this -> Position.Z};
+
+		if (Actions.Up) this -> Position = {this -> Position.X, this -> Position.Y + this -> Speed * (float) DeltaTime, this -> Position.Z};
+		if (Actions.Down) this -> Position = {this -> Position.X, this -> Position.Y - this -> Speed * (float) DeltaTime, this -> Position.Z};
+
+		if (Actions.MouseLook) {
+			this -> Rotation.X -= Actions.MouseDeltaY * (float) DeltaTime * this -> MouseSensitivity;
+			this -> Rotation.Y += Actions.MouseDeltaX * (float) DeltaTime * this -> MouseSensitivity;
+
+			Actions.MouseDeltaX = 0;
+			Actions.MouseDeltaY = 0;
+		}
+	}
+};
+
+struct AppState {
+	const char * AppName = "3D Cube";
+
+	SDL_Window * Window = nullptr;
+	SDL_Renderer * Renderer = nullptr;
+
+	int WindowWidth = 800;
+	int WindowHeight = 800;
+
+	bool VSync = true;
+	bool Fullscreen = false;
+
+	Uint64 PreviousCounter = SDL_GetPerformanceCounter();
+
+	Camera GlobalCamera = Camera();
+	CameraActions GlobalCameraActions = CameraActions();
+
+	SDL_Color BackgroundColor = {0, 0, 0, SDL_ALPHA_OPAQUE};
+	SDL_Color ForegroundColor = {120, 0, 180, SDL_ALPHA_OPAQUE};
+
+	bool Fog = false;
+	float Atmosphere = 0.1f;
+
+	float NearClipPlane = 0.05f;
+
+	std::vector <Vector3> Vertices = {
+		{0.25f, 0.25f, 0.25f},
+		{0.25f, -0.25f, 0.25f},
+		{-0.25f, -0.25f, 0.25f},
+		{-0.25f, 0.25f, 0.25f},
+
+		{0.25f, 0.25f, -0.25f},
+		{0.25f, -0.25f, -0.25f},
+		{-0.25f, -0.25f, -0.25f},
+		{-0.25f, 0.25f, -0.25f},
+	};
+
+	std::vector <std::vector <int>> Faces = {
+		{0, 1, 2 ,3},
+		{4, 5, 6, 7},
+		{0, 4},
+		{1, 5},
+		{2, 6},
+		{3, 7},
+	};
+};
+
+SDL_AppResult SDL_AppInit(void ** App, int ArgumentCount, char * ArgumentValues[]) {
+	if (!SDL_Init(SDL_INIT_VIDEO)) return SDL_APP_FAILURE;
+
+	AppState * State = new AppState();
+	*App = State;
+
+	if (!SDL_CreateWindowAndRenderer(State -> AppName,
+		State -> WindowWidth, State -> WindowHeight,
+		SDL_WINDOW_RESIZABLE, &State -> Window, &State -> Renderer)) {
+		return SDL_APP_FAILURE;
+	}
+
+	SDL_SetRenderDrawBlendMode(State -> Renderer, SDL_BLENDMODE_BLEND);
+	SDL_SetRenderVSync(State -> Renderer, State -> VSync);
+	SDL_SetWindowFullscreen(State -> Window, State -> Fullscreen);
+
+	return SDL_APP_CONTINUE;
+}
+
+SDL_AppResult SDL_AppEvent(void * App, SDL_Event * Event) {
+	AppState * State = (AppState*) App;
+
+	if (Event -> type == SDL_EVENT_QUIT) return SDL_APP_SUCCESS;
+
+	if (Event -> type == SDL_EVENT_WINDOW_RESIZED) SDL_GetWindowSize(State -> Window, &State -> WindowWidth, &State -> WindowHeight);
+
+	if (Event -> type == SDL_EVENT_KEY_DOWN) {
+		SDL_Keycode Keycode = Event -> key.key;
+
+		if (Keycode == SDLK_ESCAPE) return SDL_APP_SUCCESS;
+
+		if (Keycode == SDLK_F11) {
+			State -> Fullscreen = ToggleFullscreen(State -> Window);
+		}
+
+		// Camera
+
+		if (Keycode == SDLK_W) State -> GlobalCameraActions.Forward = true;
+		if (Keycode == SDLK_S) State -> GlobalCameraActions.Backward = true;
+
+		if (Keycode == SDLK_D) State -> GlobalCameraActions.Right = true;
+		if (Keycode == SDLK_A) State -> GlobalCameraActions.Left = true;
+
+		if (Keycode == SDLK_E) State -> GlobalCameraActions.Up = true;
+		if (Keycode == SDLK_Q) State -> GlobalCameraActions.Down = true;
+	}
+
+	if (Event -> type == SDL_EVENT_KEY_UP) {
+		SDL_Keycode Keycode = Event -> key.key;
+
+		// Camera
+
+		if (Keycode == SDLK_W) State -> GlobalCameraActions.Forward = false;
+		if (Keycode == SDLK_S) State -> GlobalCameraActions.Backward = false;
+
+		if (Keycode == SDLK_D) State -> GlobalCameraActions.Right = false;
+		if (Keycode == SDLK_A) State -> GlobalCameraActions.Left = false;
+
+		if (Keycode == SDLK_E) State -> GlobalCameraActions.Up = false;
+		if (Keycode == SDLK_Q) State -> GlobalCameraActions.Down = false;
+	}
+
+	if (Event -> type == SDL_EVENT_MOUSE_BUTTON_DOWN) {
+		Uint8 Button = Event -> button.button;
+
+		if (Button == SDL_BUTTON_RIGHT) {
+			State -> GlobalCameraActions.MouseLook = true;
+			SDL_SetWindowRelativeMouseMode(State -> Window, true);
+		}
+	}
+
+	if (Event -> type == SDL_EVENT_MOUSE_BUTTON_UP) {
+		Uint8 Button = Event -> button.button;
+
+		if (Button == SDL_BUTTON_RIGHT) {
+			State -> GlobalCameraActions.MouseLook = false;
+			SDL_SetWindowRelativeMouseMode(State -> Window, false);
+		}
+	}
+
+	if (Event -> type == SDL_EVENT_MOUSE_MOTION && State -> GlobalCameraActions.MouseLook) {
+		State -> GlobalCameraActions.MouseDeltaX = Event -> motion.xrel;
+		State -> GlobalCameraActions.MouseDeltaY = Event -> motion.yrel;
+	}
+
+	return SDL_APP_CONTINUE;
+}
+
+SDL_AppResult SDL_AppIterate(void * App) {
+	AppState * State = (AppState*) App;
+
+	Uint64 CurrentCounter = SDL_GetPerformanceCounter();
+	double DeltaTime = (double) (CurrentCounter - State -> PreviousCounter) / SDL_GetPerformanceFrequency();
+	State -> PreviousCounter = CurrentCounter;
+
+	char Title[128];
+	snprintf(Title, sizeof(Title), "%s - %d FPS", State -> AppName, static_cast <int> (1 / DeltaTime));
+	SDL_SetWindowTitle(State -> Window, Title);
+
+	State -> GlobalCamera.Update(DeltaTime, State -> GlobalCameraActions);
+
+	SetDrawColor(State -> Renderer, State -> BackgroundColor);
+	SDL_RenderClear(State -> Renderer);
+	SetDrawColor(State -> Renderer, State -> ForegroundColor);
+
+	for (const std::vector <int> & Face : State -> Faces) {
+		const int N = (int) Face.size();
+		 
+		for (int VerticeIndex = 0; VerticeIndex < N; ++VerticeIndex) {
+			const Vector3 A = State -> Vertices[Face[VerticeIndex]];
+			const Vector3 B = State -> Vertices[Face[(VerticeIndex + 1) % N]];
+
+			Vector3 RotatedA = RotateYZ(RotateXZ(RotateXY(A,
+				State -> GlobalCamera.Rotation.Z),
+				State -> GlobalCamera.Rotation.Y),
+				State -> GlobalCamera.Rotation.X
+			);
+
+			Vector3 RotatedB = RotateYZ(RotateXZ(RotateXY(B,
+				State -> GlobalCamera.Rotation.Z),
+				State -> GlobalCamera.Rotation.Y),
+				State -> GlobalCamera.Rotation.X
+			);
+
+			Vector3 ShiftedA = {
+				RotatedA.X - State -> GlobalCamera.Position.X,
+				RotatedA.Y - State -> GlobalCamera.Position.Y,
+				RotatedA.Z - State -> GlobalCamera.Position.Z
+			};
+
+			Vector3 ShiftedB = {
+				RotatedB.X - State -> GlobalCamera.Position.X,
+				RotatedB.Y - State -> GlobalCamera.Position.Y,
+				RotatedB.Z - State -> GlobalCamera.Position.Z
+			};
+
+			if (!ClipLineNearPlane(ShiftedA, ShiftedB, State -> NearClipPlane)) continue;
+
+			Vector2 ProjectedA = ProjectFrom3D(ShiftedA);
+			Vector2 ProjectedB = ProjectFrom3D(ShiftedB);
+
+			Vector2 WindowedB = ToWindowSpace(ProjectedB, State -> WindowWidth, State -> WindowHeight);
+			Vector2 WindowedA = ToWindowSpace(ProjectedA, State -> WindowWidth, State -> WindowHeight);
+
+			if (State -> Fog) {
+				float Depth = (ShiftedA.Z + ShiftedB.Z) * 0.5f;
+				float Brightness = SDL_clamp(1.0f - Depth * State->Atmosphere, 0.0f, 1.0f);
+
+				SDL_SetRenderDrawColor(State->Renderer,
+					Uint8(State->ForegroundColor.r),
+					Uint8(State->ForegroundColor.g),
+					Uint8(State->ForegroundColor.b),
+					Uint8(Brightness * 255)
+				);
+			}
+
+			SDL_RenderLine(State -> Renderer, WindowedA.X, WindowedA.Y, WindowedB.X, WindowedB.Y);
+		}
+	}
+
+	SDL_RenderPresent(State -> Renderer);
+
+	return SDL_APP_CONTINUE;
+}
+
+void SDL_AppQuit(void * App, SDL_AppResult Result) {
+	AppState * State = (AppState*) App;
+
+	if (State) {
+		if (State -> Renderer) SDL_DestroyRenderer(State -> Renderer);
+		if (State -> Window) SDL_DestroyWindow(State -> Window);
+		delete State;
+	}
+
+	SDL_Quit();
+}
