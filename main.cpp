@@ -180,6 +180,7 @@ struct Camera {
 			this -> Position.X += LookVector.X * this -> Speed * Actions.Scroll;
 			this -> Position.Y += LookVector.Y * this -> Speed * Actions.Scroll;
 			this -> Position.Z += LookVector.Z * this -> Speed * Actions.Scroll;
+
 			Actions.Scroll = 0;
 		}
 	}
