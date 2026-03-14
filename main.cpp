@@ -113,6 +113,7 @@ struct CameraActions {
 	bool Down = false;
 
 	bool MouseLook = false;
+	bool SlowDown = false;
 
 	Vector2 MouseDelta = {0.0f, 0.0f};
 
@@ -124,17 +125,48 @@ struct Camera {
 	Vector3 Rotation = {0, 0, 0};
 
 	float Speed = 5.0f;
+	float SlowDownSpeed = 1.0f;
 	float MouseSensitivity = 1.0f;
 
 	void Update(const double & DeltaTime, CameraActions & Actions) {
-		if (Actions.Forward) this -> Position = {this -> Position.X, this -> Position.Y, this -> Position.Z + this -> Speed * (float) DeltaTime};
-		if (Actions.Backward) this -> Position = {this -> Position.X, this -> Position.Y, this -> Position.Z - this -> Speed * (float) DeltaTime};
+		const float MoveDelta = (Actions.SlowDown) ? this -> SlowDownSpeed * (float) DeltaTime : this -> Speed * (float) DeltaTime;
 
-		if (Actions.Right) this -> Position = {this -> Position.X + this -> Speed * (float) DeltaTime, this -> Position.Y, this -> Position.Z};
-		if (Actions.Left) this -> Position = {this -> Position.X - this -> Speed * (float) DeltaTime, this -> Position.Y, this -> Position.Z};
+		const Vector3 LookVector = {
+			SDL_sinf(this -> Rotation.Y) * SDL_cosf(this -> Rotation.X),
+			SDL_sinf(this -> Rotation.X),
+			SDL_cosf(this -> Rotation.Y) * SDL_cosf(this -> Rotation.X),
+		};
 
-		if (Actions.Up) this -> Position = {this -> Position.X, this -> Position.Y + this -> Speed * (float) DeltaTime, this -> Position.Z};
-		if (Actions.Down) this -> Position = {this -> Position.X, this -> Position.Y - this -> Speed * (float) DeltaTime, this -> Position.Z};
+		const Vector3 RightVector = {
+			SDL_cosf(this -> Rotation.Y),
+			0,
+			-SDL_sinf(this -> Rotation.Y)
+		};
+
+		if (Actions.Forward) {
+			this -> Position.X += LookVector.X * MoveDelta;
+			this -> Position.Y += LookVector.Y * MoveDelta;
+			this -> Position.Z += LookVector.Z * MoveDelta;
+		}
+
+		if (Actions.Backward) {
+			this -> Position.X -= LookVector.X * MoveDelta;
+			this -> Position.Y -= LookVector.Y * MoveDelta;
+			this -> Position.Z -= LookVector.Z * MoveDelta;
+		}
+
+		if (Actions.Right) {
+			this -> Position.X += RightVector.X * MoveDelta;
+			this -> Position.Z += RightVector.Z * MoveDelta;
+		}
+
+		if (Actions.Left) {
+			this -> Position.X -= RightVector.X * MoveDelta;
+			this -> Position.Z -= RightVector.Z * MoveDelta;
+		}
+
+		if (Actions.Up) this -> Position.Y += MoveDelta;
+		if (Actions.Down) this -> Position.Y -= MoveDelta;
 
 		if (Actions.MouseLook) {
 			this -> Rotation.X -= Actions.MouseDelta.Y * (float) DeltaTime * this -> MouseSensitivity;
@@ -145,7 +177,9 @@ struct Camera {
 		}
 
 		if (Actions.Scroll != 0) {
-			this -> Position = {this -> Position.X, this -> Position.Y, this -> Position.Z + Actions.Scroll * this -> Speed};
+			this -> Position.X += LookVector.X * this -> Speed * Actions.Scroll;
+			this -> Position.Y += LookVector.Y * this -> Speed * Actions.Scroll;
+			this -> Position.Z += LookVector.Z * this -> Speed * Actions.Scroll;
 			Actions.Scroll = 0;
 		}
 	}
@@ -238,6 +272,8 @@ SDL_AppResult SDL_AppEvent(void * App, SDL_Event * Event) {
 
 		if (Keycode == SDLK_E) State -> GlobalCameraActions.Up = true;
 		if (Keycode == SDLK_Q) State -> GlobalCameraActions.Down = true;
+
+		if (Keycode == SDLK_LSHIFT) State -> GlobalCameraActions.SlowDown = true;
 	}
 
 	if (Event -> type == SDL_EVENT_KEY_UP) {
@@ -251,6 +287,8 @@ SDL_AppResult SDL_AppEvent(void * App, SDL_Event * Event) {
 
 		if (Keycode == SDLK_E) State -> GlobalCameraActions.Up = false;
 		if (Keycode == SDLK_Q) State -> GlobalCameraActions.Down = false;
+
+		if (Keycode == SDLK_LSHIFT) State -> GlobalCameraActions.SlowDown = false;
 	}
 
 	if (Event -> type == SDL_EVENT_MOUSE_BUTTON_DOWN) {
@@ -306,34 +344,34 @@ SDL_AppResult SDL_AppIterate(void * App) {
 			const Vector3 A = State -> Vertices[Face[VerticeIndex]];
 			const Vector3 B = State -> Vertices[Face[(VerticeIndex + 1) % N]];
 
-			Vector3 RotatedA = RotateYZ(RotateXZ(RotateXY(A,
-				State -> GlobalCamera.Rotation.Z),
-				State -> GlobalCamera.Rotation.Y),
-				State -> GlobalCamera.Rotation.X
-			);
-
-			Vector3 RotatedB = RotateYZ(RotateXZ(RotateXY(B,
-				State -> GlobalCamera.Rotation.Z),
-				State -> GlobalCamera.Rotation.Y),
-				State -> GlobalCamera.Rotation.X
-			);
-
 			Vector3 ShiftedA = {
-				RotatedA.X - State -> GlobalCamera.Position.X,
-				RotatedA.Y - State -> GlobalCamera.Position.Y,
-				RotatedA.Z - State -> GlobalCamera.Position.Z
+				A.X - State -> GlobalCamera.Position.X,
+				A.Y - State -> GlobalCamera.Position.Y,
+				A.Z - State -> GlobalCamera.Position.Z,
 			};
 
 			Vector3 ShiftedB = {
-				RotatedB.X - State -> GlobalCamera.Position.X,
-				RotatedB.Y - State -> GlobalCamera.Position.Y,
-				RotatedB.Z - State -> GlobalCamera.Position.Z
+				B.X - State -> GlobalCamera.Position.X,
+				B.Y - State -> GlobalCamera.Position.Y,
+				B.Z - State -> GlobalCamera.Position.Z,
 			};
 
-			if (!ClipLineNearPlane(ShiftedA, ShiftedB, State -> NearClipPlane)) continue;
+			Vector3 RotatedA = RotateYZ(RotateXZ(RotateXY(ShiftedA,
+				State -> GlobalCamera.Rotation.Z),
+				State -> GlobalCamera.Rotation.Y),
+				State -> GlobalCamera.Rotation.X
+			);
 
-			Vector2 ProjectedA = ProjectFrom3D(ShiftedA);
-			Vector2 ProjectedB = ProjectFrom3D(ShiftedB);
+			Vector3 RotatedB = RotateYZ(RotateXZ(RotateXY(ShiftedB,
+				State -> GlobalCamera.Rotation.Z),
+				State -> GlobalCamera.Rotation.Y),
+				State -> GlobalCamera.Rotation.X
+			);
+
+			if (!ClipLineNearPlane(RotatedA, RotatedB, State -> NearClipPlane)) continue;
+
+			Vector2 ProjectedA = ProjectFrom3D(RotatedA);
+			Vector2 ProjectedB = ProjectFrom3D(RotatedB);
 
 			Vector2 WindowedB = ToWindowSpace(ProjectedB, State -> WindowWidth, State -> WindowHeight);
 			Vector2 WindowedA = ToWindowSpace(ProjectedA, State -> WindowWidth, State -> WindowHeight);
