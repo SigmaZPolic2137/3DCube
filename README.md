@@ -1,1 +1,1 @@
-A simple wireframe renderer made in C++ programming language and using SDL3 liblary.
+A simple wireframe renderer written in C++ programming language using the SDL3 library.
