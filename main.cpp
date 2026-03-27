@@ -77,7 +77,7 @@ static Vector3 RotateXZ(const Vector3 & Position, float Angle) {
 	};
 }
 
-static Vector3 RotateXY(const Vector3& Position, float Angle) {
+static Vector3 RotateXY(const Vector3 & Position, float Angle) {
 	const float Cos = SDL_cosf(Angle);
 	const float Sin = SDL_sinf(Angle);
 
@@ -308,11 +308,11 @@ struct Object {
 
 	virtual void Render(const RenderData & Data) {
 		for (const std::vector <int> & Face : this -> MeshData.Faces) {
-			const int N = (int)Face.size();
+			const int N = (int) Face.size();
 
 			for (int VertexIndex = 0; VertexIndex < N; ++VertexIndex) {
-				const Vector3 A = this -> TransformVertex(this -> MeshData.Vertices[Face[VertexIndex]], *this);
-				const Vector3 B = this -> TransformVertex(this -> MeshData.Vertices[Face[(VertexIndex + 1) % N]], *this);
+				const Vector3 A = Object::TransformVertex(this -> MeshData.Vertices[Face[VertexIndex]], *this);
+				const Vector3 B = Object::TransformVertex(this -> MeshData.Vertices[Face[(VertexIndex + 1) % N]], *this);
 
 				const Vector3 ShiftedA = {
 					.X = A.X - Data.GlobalCamera.Position.X,
@@ -414,7 +414,7 @@ static void InitializeScene(std::vector <Object*> & Scene) {
 	Scene.emplace_back(Teapot);
 
 
-	SpinningCube* Spin = new SpinningCube();
+	SpinningCube * Spin = new SpinningCube();
 	Spin -> Color = {255, 0, 0, SDL_ALPHA_OPAQUE};
 	Scene.push_back(Spin);
 
@@ -446,7 +446,7 @@ SDL_AppResult SDL_AppInit(void ** App, int ArgumentCount, char * ArgumentValues[
 	SDL_SetRenderVSync(State -> Renderer, State -> VSync);
 	SDL_SetWindowFullscreen(State -> Window, State -> Fullscreen);
 
-	InitializeScene(State->Scene);
+	InitializeScene(State -> Scene);
 
 	return SDL_APP_CONTINUE;
 }
@@ -547,7 +547,7 @@ SDL_AppResult SDL_AppIterate(void * App) {
 		.NearPlane = State -> NearClipPlane,
 	};
 
-	for (Object* Target : State -> Scene) {
+	for (Object * Target : State -> Scene) {
 		Target -> Update(DeltaTime);
 		Target -> Render(Data);
 	}
