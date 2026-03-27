@@ -4,6 +4,11 @@
 
 #include <iostream>
 #include <vector>
+#include <set>
+#include <fstream>
+#include <sstream>
+#include <string>
+#include <utility>
 
 struct Vector2 {
 	float X, Y;
@@ -83,7 +88,7 @@ static Vector3 RotateXY(const Vector3& Position, float Angle) {
 	};
 }
 
-static bool ClipLineNearPlane(Vector3 & A, Vector3 & B, float NearPlane) {
+static bool ClipLineNearPlane(Vector3 & A, Vector3 & B, const float NearPlane) {
 	if (A.Z >= NearPlane && B.Z >= NearPlane) return true;
 	if (A.Z < NearPlane && B.Z < NearPlane) return false;
 
@@ -100,7 +105,6 @@ static bool ClipLineNearPlane(Vector3 & A, Vector3 & B, float NearPlane) {
 
 	return true;
 }
-
 
 struct CameraActions {
 	bool Forward = false;
@@ -121,7 +125,7 @@ struct CameraActions {
 };
 
 struct Camera {
-	Vector3 Position = {0, 0, -1.0f};
+	Vector3 Position = {0, 0, -5.0f};
 	Vector3 Rotation = {0, 0, 0};
 
 	float Speed = 5.0f;
@@ -169,8 +173,8 @@ struct Camera {
 		if (Actions.Down) this -> Position.Y -= MoveDelta;
 
 		if (Actions.MouseLook) {
-			this -> Rotation.X -= Actions.MouseDelta.Y * (float) DeltaTime * this -> MouseSensitivity;
-			this -> Rotation.Y += Actions.MouseDelta.X * (float) DeltaTime * this -> MouseSensitivity;
+			this -> Rotation.X -= Actions.MouseDelta.Y * this -> MouseSensitivity * 0.05f;
+			this -> Rotation.Y += Actions.MouseDelta.X * this -> MouseSensitivity * 0.05f;
 
 			Actions.MouseDelta.X = 0;
 			Actions.MouseDelta.Y = 0;
@@ -183,6 +187,183 @@ struct Camera {
 
 			Actions.Scroll = 0;
 		}
+	}
+};
+
+struct Mesh {
+	std::vector <Vector3> Vertices;
+	std::vector <std::vector <int>> Faces;
+
+	static Mesh Cube() {
+		Mesh NewMesh;
+
+		NewMesh.Vertices = {
+			{0.5f, 0.5f, 0.5f},
+			{0.5f, -0.5f, 0.5f},
+			{-0.5f, -0.5f, 0.5f},
+			{-0.5f, 0.5f, 0.5f},
+
+			{0.5f, 0.5f, -0.5f},
+			{0.5f, -0.5f, -0.5f},
+			{-0.5f, -0.5f, -0.5f},
+			{-0.5f, 0.5f, -0.5f},
+		};
+
+		NewMesh.Faces = {
+			{0, 1, 2 ,3},
+			{4, 5, 6, 7},
+			{0, 4},
+			{1, 5},
+			{2, 6},
+			{3, 7},
+		};
+
+		return NewMesh;
+	}
+
+	static Mesh FromOBJ(const std::string & Path) {
+		Mesh NewMesh;
+
+		std::ifstream File(Path);
+
+		if (!File.is_open()) {
+			SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, "Error", "Failed to open .obj file!", NULL);
+			return Mesh::Cube();
+		}
+
+		std::string Line;
+
+		while (std::getline(File, Line)) {
+			if (Line.empty() || Line[0] == '#') continue;
+
+			std::stringstream Stream(Line);
+			std::string Type;
+
+			Stream >> Type;
+
+			if (Type == "v") {
+				Vector3 Vertice;
+
+				if (Stream >> Vertice.X >> Vertice.Y >> Vertice.Z) {
+					NewMesh.Vertices.push_back(Vertice);
+				}
+			} else if (Type == "f") {
+				std::string Token;
+				std::vector <int> Face;
+
+				while (Stream >> Token) {
+					try {
+						size_t Slash = Token.find('/');
+						int Index = std::stoi(Token.substr(0, Slash));
+						Index = (Index > 0) ? (Index - 1) : static_cast <int> (NewMesh.Vertices.size() + Index);
+						Face.push_back(Index);
+					} catch (...) {continue;};
+				}
+
+				if (Face.size() >= 2) NewMesh.Faces.push_back(Face);
+			}
+		}
+
+		return NewMesh;
+	}
+};
+
+struct RenderData {
+	SDL_Renderer * Renderer;
+	const Camera & GlobalCamera;
+	const int Width, Height;
+	const float NearPlane;
+};
+
+struct Object {
+	Mesh MeshData;
+
+	Vector3 Position = {0, 0, 0};
+	Vector3 Rotation = {0, 0, 0};
+	Vector3 Scale = {1.0f, 1.0f, 1.0f};
+
+	SDL_Color Color = {120, 0, 180, SDL_ALPHA_OPAQUE};
+
+	static Vector3 TransformVertex(const Vector3 & Vertex, const Object & Target) {
+		Vector3 Scaled = {
+			.X = Vertex.X * Target.Scale.X,
+			.Y = Vertex.Y * Target.Scale.Y,
+			.Z = Vertex.Z * Target.Scale.Z,
+		};
+
+		Vector3 Rotated = RotateYZ(RotateXZ(RotateXY(Scaled,
+			Target.Rotation.Z),
+			Target.Rotation.Y),
+			Target.Rotation.X
+		);
+
+		return {
+			.X = Rotated.X + Target.Position.X,
+			.Y = Rotated.Y + Target.Position.Y,
+			.Z = Rotated.Z + Target.Position.Z,
+		};
+	}	
+
+	virtual void Update(const double & DeltaTime) {}
+
+	virtual void Render(const RenderData & Data) {
+		for (const std::vector <int> & Face : this -> MeshData.Faces) {
+			const int N = (int)Face.size();
+
+			for (int VertexIndex = 0; VertexIndex < N; ++VertexIndex) {
+				const Vector3 A = this -> TransformVertex(this -> MeshData.Vertices[Face[VertexIndex]], *this);
+				const Vector3 B = this -> TransformVertex(this -> MeshData.Vertices[Face[(VertexIndex + 1) % N]], *this);
+
+				const Vector3 ShiftedA = {
+					.X = A.X - Data.GlobalCamera.Position.X,
+					.Y = A.Y - Data.GlobalCamera.Position.Y,
+					.Z = A.Z - Data.GlobalCamera.Position.Z,
+				};
+
+				const Vector3 ShiftedB = {
+					.X = B.X - Data.GlobalCamera.Position.X,
+					.Y = B.Y - Data.GlobalCamera.Position.Y,
+					.Z = B.Z - Data.GlobalCamera.Position.Z,
+				};
+
+				Vector3 RotatedA = RotateYZ(RotateXZ(RotateXY(ShiftedA,
+					Data.GlobalCamera.Rotation.Z),
+					Data.GlobalCamera.Rotation.Y),
+					Data.GlobalCamera.Rotation.X
+				);
+
+				Vector3 RotatedB = RotateYZ(RotateXZ(RotateXY(ShiftedB,
+					Data.GlobalCamera.Rotation.Z),
+					Data.GlobalCamera.Rotation.Y),
+					Data.GlobalCamera.Rotation.X
+				);
+
+				if (!ClipLineNearPlane(RotatedA, RotatedB, Data.NearPlane)) continue;
+
+				Vector2 ProjectedA = ProjectFrom3D(RotatedA);
+				Vector2 ProjectedB = ProjectFrom3D(RotatedB);
+
+				Vector2 WindowedB = ToWindowSpace(ProjectedB, Data.Width, Data.Height);
+				Vector2 WindowedA = ToWindowSpace(ProjectedA, Data.Width, Data.Height);
+
+				SetDrawColor(Data.Renderer, this -> Color);
+				SDL_RenderLine(Data.Renderer, WindowedA.X, WindowedA.Y, WindowedB.X, WindowedB.Y);
+			}
+		}
+	}
+};
+
+struct SpinningCube : public Object {
+	float RotationSpeed = 1.0f;
+
+	SpinningCube() {
+		this -> MeshData = Mesh::Cube();
+	}
+
+	void Update(const double & DeltaTime) override {
+		this -> Rotation.X += RotationSpeed * 0.5f * (float) DeltaTime;
+		this -> Rotation.Y += RotationSpeed * 1.0f * (float) DeltaTime;
+		this -> Rotation.Z += RotationSpeed * 0.2f * (float) DeltaTime;
 	}
 };
 
@@ -208,27 +389,46 @@ struct AppState {
 
 	float NearClipPlane = 0.05f;
 
-	std::vector <Vector3> Vertices = {
-		{0.25f, 0.25f, 0.25f},
-		{0.25f, -0.25f, 0.25f},
-		{-0.25f, -0.25f, 0.25f},
-		{-0.25f, 0.25f, 0.25f},
-
-		{0.25f, 0.25f, -0.25f},
-		{0.25f, -0.25f, -0.25f},
-		{-0.25f, -0.25f, -0.25f},
-		{-0.25f, 0.25f, -0.25f},
-	};
-
-	std::vector <std::vector <int>> Faces = {
-		{0, 1, 2 ,3},
-		{4, 5, 6, 7},
-		{0, 4},
-		{1, 5},
-		{2, 6},
-		{3, 7},
-	};
+	std::vector <Object*> Scene;
 };
+
+static void InitializeScene(std::vector <Object*> & Scene) {
+	Object * FirstCube = new Object();
+	FirstCube -> MeshData = Mesh::Cube();
+	FirstCube -> Position = {-2.0f, 0, 0};
+	FirstCube -> Rotation = {20.0f, 20.0f, 20.0f};
+	Scene.emplace_back(FirstCube);
+
+	Object * SecondCube = new Object();
+	SecondCube -> MeshData = Mesh::Cube();
+	SecondCube -> Position = {2.0f, 0, 0};
+	SecondCube -> Scale = {1.5f, 2.0f, 0.5f};
+	SecondCube -> Color = {0, 255, 0, SDL_ALPHA_OPAQUE};
+	Scene.emplace_back(SecondCube);
+
+	Object * Teapot = new Object();
+	Teapot -> MeshData = Mesh::FromOBJ("teapot.obj");
+	Teapot -> Position = {0, -2.5f, 10.0f};
+	Teapot -> Scale = {0.1f, 0.1f, 0.1f};
+	Teapot -> Color = {255, 255, 0, SDL_ALPHA_OPAQUE};
+	Scene.emplace_back(Teapot);
+
+
+	SpinningCube* Spin = new SpinningCube();
+	Spin -> Color = {255, 0, 0, SDL_ALPHA_OPAQUE};
+	Scene.push_back(Spin);
+
+	/*
+
+	Object * Bunny = new Object();
+	Bunny -> MeshData = Mesh::FromOBJ("stanford-bunny.obj");
+	Bunny -> Position = {0, 0, 10};
+	Bunny -> Scale = {50.0f, 50.0f, 50.0f};
+	Bunny -> Color = {255, 255, 0, SDL_ALPHA_OPAQUE};
+	Scene.emplace_back(Bunny);
+
+	*/
+}
 
 SDL_AppResult SDL_AppInit(void ** App, int ArgumentCount, char * ArgumentValues[]) {
 	if (!SDL_Init(SDL_INIT_VIDEO)) return SDL_APP_FAILURE;
@@ -245,6 +445,8 @@ SDL_AppResult SDL_AppInit(void ** App, int ArgumentCount, char * ArgumentValues[
 	SDL_SetRenderDrawBlendMode(State -> Renderer, SDL_BLENDMODE_BLEND);
 	SDL_SetRenderVSync(State -> Renderer, State -> VSync);
 	SDL_SetWindowFullscreen(State -> Window, State -> Fullscreen);
+
+	InitializeScene(State->Scene);
 
 	return SDL_APP_CONTINUE;
 }
@@ -336,49 +538,18 @@ SDL_AppResult SDL_AppIterate(void * App) {
 
 	SetDrawColor(State -> Renderer, State -> BackgroundColor);
 	SDL_RenderClear(State -> Renderer);
-	SetDrawColor(State -> Renderer, State -> ForegroundColor);
 
-	for (const std::vector <int> & Face : State -> Faces) {
-		const int N = (int) Face.size();
-		 
-		for (int VerticeIndex = 0; VerticeIndex < N; ++VerticeIndex) {
-			const Vector3 A = State -> Vertices[Face[VerticeIndex]];
-			const Vector3 B = State -> Vertices[Face[(VerticeIndex + 1) % N]];
+	RenderData Data = {
+		.Renderer = State -> Renderer,
+		.GlobalCamera = State -> GlobalCamera,
+		.Width = State -> WindowWidth,
+		.Height = State -> WindowHeight,
+		.NearPlane = State -> NearClipPlane,
+	};
 
-			Vector3 ShiftedA = {
-				A.X - State -> GlobalCamera.Position.X,
-				A.Y - State -> GlobalCamera.Position.Y,
-				A.Z - State -> GlobalCamera.Position.Z,
-			};
-
-			Vector3 ShiftedB = {
-				B.X - State -> GlobalCamera.Position.X,
-				B.Y - State -> GlobalCamera.Position.Y,
-				B.Z - State -> GlobalCamera.Position.Z,
-			};
-
-			Vector3 RotatedA = RotateYZ(RotateXZ(RotateXY(ShiftedA,
-				State -> GlobalCamera.Rotation.Z),
-				State -> GlobalCamera.Rotation.Y),
-				State -> GlobalCamera.Rotation.X
-			);
-
-			Vector3 RotatedB = RotateYZ(RotateXZ(RotateXY(ShiftedB,
-				State -> GlobalCamera.Rotation.Z),
-				State -> GlobalCamera.Rotation.Y),
-				State -> GlobalCamera.Rotation.X
-			);
-
-			if (!ClipLineNearPlane(RotatedA, RotatedB, State -> NearClipPlane)) continue;
-
-			Vector2 ProjectedA = ProjectFrom3D(RotatedA);
-			Vector2 ProjectedB = ProjectFrom3D(RotatedB);
-
-			Vector2 WindowedB = ToWindowSpace(ProjectedB, State -> WindowWidth, State -> WindowHeight);
-			Vector2 WindowedA = ToWindowSpace(ProjectedA, State -> WindowWidth, State -> WindowHeight);
-
-			SDL_RenderLine(State -> Renderer, WindowedA.X, WindowedA.Y, WindowedB.X, WindowedB.Y);
-		}
+	for (Object* Target : State -> Scene) {
+		Target -> Update(DeltaTime);
+		Target -> Render(Data);
 	}
 
 	SDL_RenderPresent(State -> Renderer);
@@ -392,6 +563,11 @@ void SDL_AppQuit(void * App, SDL_AppResult Result) {
 	if (State) {
 		if (State -> Renderer) SDL_DestroyRenderer(State -> Renderer);
 		if (State -> Window) SDL_DestroyWindow(State -> Window);
+
+		for (Object * Target : State -> Scene) {
+			delete Target;
+		}
+
 		delete State;
 	}
 
