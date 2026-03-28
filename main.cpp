@@ -130,33 +130,39 @@ struct Camera {
 
 	float Speed = 5.0f;
 	float SlowDownSpeed = 1.0f;
-	float MouseSensitivity = 1.0f;
+	float MouseSensitivity = 0.005f;
 
 	void Update(const double & DeltaTime, CameraActions & Actions) {
 		const float MoveDelta = (Actions.SlowDown) ? this -> SlowDownSpeed * (float) DeltaTime : this -> Speed * (float) DeltaTime;
 
-		const Vector3 LookVector = {
-			SDL_sinf(this -> Rotation.Y) * SDL_cosf(this -> Rotation.X),
-			SDL_sinf(this -> Rotation.X),
-			SDL_cosf(this -> Rotation.Y) * SDL_cosf(this -> Rotation.X),
+		const Vector3 ForwardVector = {
+			.X = SDL_sinf(this -> Rotation.Y) * SDL_cosf(this -> Rotation.X),
+			.Y = SDL_sinf(this -> Rotation.X),
+			.Z = SDL_cosf(this -> Rotation.Y) * SDL_cosf(this -> Rotation.X),
+		};
+
+		const Vector3 UpVector = {
+			.X = SDL_sinf(this -> Rotation.Y) * SDL_sinf(this -> Rotation.X),
+			.Y = SDL_cosf(this -> Rotation.X),
+			.Z = SDL_cosf(this -> Rotation.Y) * SDL_sinf(this -> Rotation.X),
 		};
 
 		const Vector3 RightVector = {
-			SDL_cosf(this -> Rotation.Y),
-			0,
-			-SDL_sinf(this -> Rotation.Y)
+			.X = SDL_cosf(this -> Rotation.Y),
+			.Y = 0,
+			.Z = -SDL_sinf(this -> Rotation.Y),
 		};
 
 		if (Actions.Forward) {
-			this -> Position.X += LookVector.X * MoveDelta;
-			this -> Position.Y += LookVector.Y * MoveDelta;
-			this -> Position.Z += LookVector.Z * MoveDelta;
+			this -> Position.X += ForwardVector.X * MoveDelta;
+			this -> Position.Y += ForwardVector.Y * MoveDelta;
+			this -> Position.Z += ForwardVector.Z * MoveDelta;
 		}
 
 		if (Actions.Backward) {
-			this -> Position.X -= LookVector.X * MoveDelta;
-			this -> Position.Y -= LookVector.Y * MoveDelta;
-			this -> Position.Z -= LookVector.Z * MoveDelta;
+			this -> Position.X -= ForwardVector.X * MoveDelta;
+			this -> Position.Y -= ForwardVector.Y * MoveDelta;
+			this -> Position.Z -= ForwardVector.Z * MoveDelta;
 		}
 
 		if (Actions.Right) {
@@ -169,21 +175,32 @@ struct Camera {
 			this -> Position.Z -= RightVector.Z * MoveDelta;
 		}
 
-		if (Actions.Up) this -> Position.Y += MoveDelta;
-		if (Actions.Down) this -> Position.Y -= MoveDelta;
+		if (Actions.Up) {
+			this -> Position.X -= UpVector.X * MoveDelta;
+			this -> Position.Y += UpVector.Y * MoveDelta;
+			this -> Position.Z -= UpVector.Z * MoveDelta;
+		}
+
+		if (Actions.Down) {
+			this -> Position.X += UpVector.X * MoveDelta;
+			this -> Position.Y -= UpVector.Y * MoveDelta;
+			this -> Position.Z += UpVector.Z * MoveDelta;
+		}
 
 		if (Actions.MouseLook) {
-			this -> Rotation.X -= Actions.MouseDelta.Y * this -> MouseSensitivity * 0.05f;
-			this -> Rotation.Y += Actions.MouseDelta.X * this -> MouseSensitivity * 0.05f;
+			this -> Rotation.X -= Actions.MouseDelta.Y * this -> MouseSensitivity;
+			this -> Rotation.Y += Actions.MouseDelta.X * this -> MouseSensitivity;
+
+			this -> Rotation.X = SDL_clamp(this -> Rotation.X, -SDL_PI_F * 0.5f, SDL_PI_F * 0.5f);
 
 			Actions.MouseDelta.X = 0;
 			Actions.MouseDelta.Y = 0;
 		}
 
 		if (Actions.Scroll != 0) {
-			this -> Position.X += LookVector.X * this -> Speed * Actions.Scroll;
-			this -> Position.Y += LookVector.Y * this -> Speed * Actions.Scroll;
-			this -> Position.Z += LookVector.Z * this -> Speed * Actions.Scroll;
+			this -> Position.X += ForwardVector.X * this -> Speed * Actions.Scroll;
+			this -> Position.Y += ForwardVector.Y * this -> Speed * Actions.Scroll;
+			this -> Position.Z += ForwardVector.Z * this -> Speed * Actions.Scroll;
 
 			Actions.Scroll = 0;
 		}
@@ -393,18 +410,22 @@ struct AppState {
 };
 
 static void InitializeScene(std::vector <Object*> & Scene) {
-	Object * FirstCube = new Object();
-	FirstCube -> MeshData = Mesh::Cube();
-	FirstCube -> Position = {-2.0f, 0, 0};
-	FirstCube -> Rotation = {20.0f, 20.0f, 20.0f};
-	Scene.emplace_back(FirstCube);
+	Object * RotatedCube = new Object();
+	RotatedCube-> MeshData = Mesh::Cube();
+	RotatedCube-> Position = {-2.0f, 0, 0};
+	RotatedCube-> Rotation = {20.0f, 20.0f, 20.0f};
+	Scene.emplace_back(RotatedCube);
 
-	Object * SecondCube = new Object();
-	SecondCube -> MeshData = Mesh::Cube();
-	SecondCube -> Position = {2.0f, 0, 0};
-	SecondCube -> Scale = {1.5f, 2.0f, 0.5f};
-	SecondCube -> Color = {0, 255, 0, SDL_ALPHA_OPAQUE};
-	Scene.emplace_back(SecondCube);
+	Object * ScaledCube = new Object();
+	ScaledCube -> MeshData = Mesh::Cube();
+	ScaledCube -> Position = {2.0f, 0, 0};
+	ScaledCube -> Scale = {1.5f, 2.0f, 0.5f};
+	ScaledCube -> Color = {0, 255, 0, SDL_ALPHA_OPAQUE};
+	Scene.emplace_back(ScaledCube);
+
+	SpinningCube * BehaviourCube = new SpinningCube();
+	BehaviourCube -> Color = {255, 0, 0, SDL_ALPHA_OPAQUE};
+	Scene.push_back(BehaviourCube);
 
 	Object * Teapot = new Object();
 	Teapot -> MeshData = Mesh::FromOBJ("teapot.obj");
@@ -412,11 +433,6 @@ static void InitializeScene(std::vector <Object*> & Scene) {
 	Teapot -> Scale = {0.1f, 0.1f, 0.1f};
 	Teapot -> Color = {255, 255, 0, SDL_ALPHA_OPAQUE};
 	Scene.emplace_back(Teapot);
-
-
-	SpinningCube * Spin = new SpinningCube();
-	Spin -> Color = {255, 0, 0, SDL_ALPHA_OPAQUE};
-	Scene.push_back(Spin);
 
 	/*
 
@@ -513,7 +529,8 @@ SDL_AppResult SDL_AppEvent(void * App, SDL_Event * Event) {
 	}
 
 	if (Event -> type == SDL_EVENT_MOUSE_MOTION && State -> GlobalCameraActions.MouseLook) {
-		State -> GlobalCameraActions.MouseDelta = {Event -> motion.xrel, Event -> motion.yrel};
+		State -> GlobalCameraActions.MouseDelta.X += Event -> motion.xrel;
+		State -> GlobalCameraActions.MouseDelta.Y += Event -> motion.yrel;
 	}
 
 	if (Event -> type == SDL_EVENT_MOUSE_WHEEL) {
