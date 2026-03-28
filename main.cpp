@@ -301,23 +301,23 @@ struct Object {
 
 	SDL_Color Color = {120, 0, 180, SDL_ALPHA_OPAQUE};
 
-	static Vector3 TransformVertex(const Vector3 & Vertex, const Object & Target) {
+	Vector3 TransformVertex(const Vector3 & Vertex) {
 		Vector3 Scaled = {
-			.X = Vertex.X * Target.Scale.X,
-			.Y = Vertex.Y * Target.Scale.Y,
-			.Z = Vertex.Z * Target.Scale.Z,
+			.X = Vertex.X * this -> Scale.X,
+			.Y = Vertex.Y * this -> Scale.Y,
+			.Z = Vertex.Z * this -> Scale.Z,
 		};
 
 		Vector3 Rotated = RotateYZ(RotateXZ(RotateXY(Scaled,
-			Target.Rotation.Z),
-			Target.Rotation.Y),
-			Target.Rotation.X
+			this -> Rotation.Z),
+			this -> Rotation.Y),
+			this -> Rotation.X
 		);
 
 		return {
-			.X = Rotated.X + Target.Position.X,
-			.Y = Rotated.Y + Target.Position.Y,
-			.Z = Rotated.Z + Target.Position.Z,
+			.X = Rotated.X + this -> Position.X,
+			.Y = Rotated.Y + this -> Position.Y,
+			.Z = Rotated.Z + this -> Position.Z,
 		};
 	}	
 
@@ -328,8 +328,8 @@ struct Object {
 			const int N = (int) Face.size();
 
 			for (int VertexIndex = 0; VertexIndex < N; ++VertexIndex) {
-				const Vector3 A = Object::TransformVertex(this -> MeshData.Vertices[Face[VertexIndex]], *this);
-				const Vector3 B = Object::TransformVertex(this -> MeshData.Vertices[Face[(VertexIndex + 1) % N]], *this);
+				const Vector3 A = this -> TransformVertex(this -> MeshData.Vertices[Face[VertexIndex]]);
+				const Vector3 B = this -> TransformVertex(this -> MeshData.Vertices[Face[(VertexIndex + 1) % N]]);
 
 				const Vector3 ShiftedA = {
 					.X = A.X - Data.GlobalCamera.Position.X,
@@ -398,8 +398,8 @@ struct AppState {
 
 	Uint64 PreviousCounter = SDL_GetPerformanceCounter();
 
-	Camera GlobalCamera = Camera();
-	CameraActions GlobalCameraActions = CameraActions();
+	Camera GlobalCamera;
+	CameraActions GlobalCameraActions;
 
 	SDL_Color BackgroundColor = {0, 0, 0, SDL_ALPHA_OPAQUE};
 	SDL_Color ForegroundColor = {120, 0, 180, SDL_ALPHA_OPAQUE};
@@ -411,9 +411,9 @@ struct AppState {
 
 static void InitializeScene(std::vector <Object*> & Scene) {
 	Object * RotatedCube = new Object();
-	RotatedCube-> MeshData = Mesh::Cube();
-	RotatedCube-> Position = {-2.0f, 0, 0};
-	RotatedCube-> Rotation = {20.0f, 20.0f, 20.0f};
+	RotatedCube -> MeshData = Mesh::Cube();
+	RotatedCube -> Position = {-2.0f, 0, 0};
+	RotatedCube -> Rotation = {20.0f, 20.0f, 20.0f};
 	Scene.emplace_back(RotatedCube);
 
 	Object * ScaledCube = new Object();
