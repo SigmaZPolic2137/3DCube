@@ -1,14 +1,13 @@
 #define SDL_MAIN_USE_CALLBACKS 1
+
 #include <SDL3/SDL.h>
 #include <SDL3/SDL_main.h>
 
-#include <iostream>
+#include <cstdio>
 #include <vector>
-#include <set>
 #include <fstream>
 #include <sstream>
 #include <string>
-#include <utility>
 
 struct Vector2 {
 	float X, Y;
@@ -259,7 +258,7 @@ struct Mesh {
 			Stream >> Type;
 
 			if (Type == "v") {
-				Vector3 Vertice;
+				Vector3 Vertice = {};
 
 				if (Stream >> Vertice.X >> Vertice.Y >> Vertice.Z) {
 					NewMesh.Vertices.push_back(Vertice);
@@ -301,14 +300,14 @@ struct Object {
 
 	SDL_Color Color = {120, 0, 180, SDL_ALPHA_OPAQUE};
 
-	Vector3 TransformVertex(const Vector3 & Vertex) {
-		Vector3 Scaled = {
+	Vector3 TransformVertex(const Vector3 & Vertex) const {
+		const Vector3 Scaled = {
 			.X = Vertex.X * this -> Scale.X,
 			.Y = Vertex.Y * this -> Scale.Y,
 			.Z = Vertex.Z * this -> Scale.Z,
 		};
 
-		Vector3 Rotated = RotateYZ(RotateXZ(RotateXY(Scaled,
+		const Vector3 Rotated = RotateYZ(RotateXZ(RotateXY(Scaled,
 			this -> Rotation.Z),
 			this -> Rotation.Y),
 			this -> Rotation.X
@@ -370,11 +369,13 @@ struct Object {
 	}
 };
 
-struct SpinningCube : public Object {
+struct SpinningObject : public Object {
 	float RotationSpeed = 1.0f;
 
-	SpinningCube() {
-		this -> MeshData = Mesh::Cube();
+	SpinningObject() = default;
+
+	SpinningObject(float RotationSpeed) {
+		this -> RotationSpeed = RotationSpeed;
 	}
 
 	void Update(const double & DeltaTime) override {
@@ -423,9 +424,10 @@ static void InitializeScene(std::vector <Object*> & Scene) {
 	ScaledCube -> Color = {0, 255, 0, SDL_ALPHA_OPAQUE};
 	Scene.emplace_back(ScaledCube);
 
-	SpinningCube * BehaviourCube = new SpinningCube();
-	BehaviourCube -> Color = {255, 0, 0, SDL_ALPHA_OPAQUE};
-	Scene.push_back(BehaviourCube);
+	SpinningObject * SpinningCube = new SpinningObject();
+	SpinningCube -> MeshData = Mesh::Cube();
+	SpinningCube -> Color = {255, 0, 0, SDL_ALPHA_OPAQUE};
+	Scene.push_back(SpinningCube);
 
 	Object * Teapot = new Object();
 	Teapot -> MeshData = Mesh::FromOBJ("teapot.obj");
