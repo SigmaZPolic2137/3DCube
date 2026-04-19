@@ -3,6 +3,7 @@
 #include <SDL3/SDL.h>
 #include <SDL3/SDL_main.h>
 
+#include <iostream>
 #include <cstdio>
 #include <vector>
 #include <fstream>
@@ -118,6 +119,9 @@ struct CameraActions {
 	bool MouseLook = false;
 	bool SlowDown = false;
 
+	bool Control = false;
+	bool Middle = false;
+
 	Vector2 MouseDelta = {0.0f, 0.0f};
 
 	float Scroll = 0.0f;
@@ -191,18 +195,31 @@ struct Camera {
 			this -> Rotation.Y += Actions.MouseDelta.X * this -> MouseSensitivity;
 
 			this -> Rotation.X = SDL_clamp(this -> Rotation.X, -SDL_PI_F * 0.5f, SDL_PI_F * 0.5f);
-
-			Actions.MouseDelta.X = 0;
-			Actions.MouseDelta.Y = 0;
 		}
 
 		if (Actions.Scroll != 0) {
 			this -> Position.X += ForwardVector.X * this -> Speed * Actions.Scroll;
 			this -> Position.Y += ForwardVector.Y * this -> Speed * Actions.Scroll;
 			this -> Position.Z += ForwardVector.Z * this -> Speed * Actions.Scroll;
-
-			Actions.Scroll = 0;
 		}
+
+		if (Actions.Middle && Actions.Control) {
+			this -> Position.X -= ForwardVector.X * Actions.MouseDelta.Y;
+			this -> Position.Y -= ForwardVector.Y * Actions.MouseDelta.Y;
+			this -> Position.Z -= ForwardVector.Z * Actions.MouseDelta.Y;
+		} else if (Actions.Middle) {
+			this -> Position.X += UpVector.X * Actions.MouseDelta.Y;
+			this -> Position.Y -= UpVector.Y * Actions.MouseDelta.Y;
+			this -> Position.Z += UpVector.Z * Actions.MouseDelta.Y;
+
+			this -> Position.X += RightVector.X * Actions.MouseDelta.X;
+			this -> Position.Y += RightVector.Y * Actions.MouseDelta.X;
+			this -> Position.Z += RightVector.Z * Actions.MouseDelta.X;
+		}
+
+		Actions.MouseDelta.X = 0;
+		Actions.MouseDelta.Y = 0;
+		Actions.Scroll = 0;
 	}
 };
 
@@ -292,7 +309,7 @@ struct RenderData {
 };
 
 struct Object {
-	Mesh MeshData;
+	Mesh MeshData = Mesh::Cube();
 
 	Vector3 Position = {0, 0, 0};
 	Vector3 Rotation = {0, 0, 0};
@@ -385,6 +402,62 @@ struct SpinningObject : public Object {
 	}
 };
 
+struct PhysicsObject : public Object {
+	Vector3 Gravity = {0, 0, 0};
+
+	Vector3 Velocity = {0, 0, 0};
+	Vector3 AngularVelocity = {0, 0, 0};
+
+	float Drag = 0.02f;
+	float Restitution = 0.5f;
+
+	bool Static = false;
+
+	void Update(const double & DeltaTime) override {
+		if (this -> Static) return;
+
+		this -> Velocity.X += this -> Gravity.X * (float) DeltaTime;
+		this -> Velocity.Y += this -> Gravity.Y * (float) DeltaTime;
+		this -> Velocity.Z += this -> Gravity.Z * (float) DeltaTime;
+
+		float Speed = SDL_sqrtf(
+			this -> Velocity.X * this -> Velocity.X +
+			this -> Velocity.Y * this -> Velocity.Y +
+			this -> Velocity.Z * this -> Velocity.Z
+		);
+
+		if (Speed > 0) {
+			float DragFactor = this -> Drag * Speed;
+
+			this -> Velocity.X += -this -> Velocity.X * DragFactor * (float) DeltaTime;
+			this -> Velocity.Y += -this -> Velocity.Y * DragFactor * (float) DeltaTime;
+			this -> Velocity.Z += -this -> Velocity.Z * DragFactor * (float) DeltaTime;
+		}
+
+		float AngularSpeed = SDL_sqrtf(
+			this -> AngularVelocity.X * this -> AngularVelocity.X +
+			this -> AngularVelocity.Y * this -> AngularVelocity.Y +
+			this -> AngularVelocity.Z * this -> AngularVelocity.Z
+		);
+
+		if (AngularSpeed > 0) {
+			float DragFactor = this -> Drag * AngularSpeed;
+
+			this -> AngularVelocity.X += -this -> AngularVelocity.X * DragFactor * (float) DeltaTime;
+			this -> AngularVelocity.Y += -this -> AngularVelocity.Y * DragFactor * (float) DeltaTime;
+			this -> AngularVelocity.Z += -this -> AngularVelocity.Z * DragFactor * (float) DeltaTime;
+		}
+
+		this -> Position.X += this -> Velocity.X * (float) DeltaTime;
+		this -> Position.Y += this -> Velocity.Y * (float) DeltaTime;
+		this -> Position.Z += this -> Velocity.Z * (float) DeltaTime;
+
+		this -> Rotation.X += this -> AngularVelocity.X * (float) DeltaTime;
+		this -> Rotation.Y += this -> AngularVelocity.Y * (float) DeltaTime;
+		this -> Rotation.Z += this -> AngularVelocity.Z * (float) DeltaTime;
+	}
+};
+
 struct AppState {
 	const char * AppName = "3D Cube";
 
@@ -427,7 +500,28 @@ static void InitializeScene(std::vector <Object*> & Scene) {
 	SpinningObject * SpinningCube = new SpinningObject();
 	SpinningCube -> MeshData = Mesh::Cube();
 	SpinningCube -> Color = {255, 0, 0, SDL_ALPHA_OPAQUE};
-	Scene.push_back(SpinningCube);
+	Scene.emplace_back(SpinningCube);
+
+	const float Scale = 5.0f;
+
+	for (int X = -4; X < 4; ++X) {
+		for (int Z = -4; Z < 4; ++Z) {
+			Object * Terrain = new Object();
+			Terrain -> MeshData = Mesh::Cube();
+			Terrain -> Position = {static_cast <float> (X) * Scale, -2.0f * Scale * 0.5f, static_cast <float> (Z) * Scale};
+			Terrain -> Scale = {Scale, Scale, Scale};
+			Terrain -> Color = {0, 255, 0, SDL_ALPHA_OPAQUE};
+			Scene.emplace_back(Terrain);
+		}
+	}
+
+	PhysicsObject * PhysicsCube = new PhysicsObject();
+	PhysicsCube -> Position = {0, 100.0f, 10.0f};
+	PhysicsCube -> Velocity = {0, -10.0f, 0};
+	PhysicsCube -> AngularVelocity = {0, 10.0f, 0};
+	Scene.emplace_back(PhysicsCube);
+
+	/*
 
 	Object * Teapot = new Object();
 	Teapot -> MeshData = Mesh::FromOBJ("teapot.obj");
@@ -435,8 +529,6 @@ static void InitializeScene(std::vector <Object*> & Scene) {
 	Teapot -> Scale = {0.1f, 0.1f, 0.1f};
 	Teapot -> Color = {255, 255, 0, SDL_ALPHA_OPAQUE};
 	Scene.emplace_back(Teapot);
-
-	/*
 
 	Object * Bunny = new Object();
 	Bunny -> MeshData = Mesh::FromOBJ("stanford-bunny.obj");
@@ -495,6 +587,7 @@ SDL_AppResult SDL_AppEvent(void * App, SDL_Event * Event) {
 		if (Keycode == SDLK_Q) State -> GlobalCameraActions.Down = true;
 
 		if (Keycode == SDLK_LSHIFT) State -> GlobalCameraActions.SlowDown = true;
+		if (Keycode == SDLK_LCTRL) State -> GlobalCameraActions.Control = true;
 	}
 
 	if (Event -> type == SDL_EVENT_KEY_UP) {
@@ -510,6 +603,7 @@ SDL_AppResult SDL_AppEvent(void * App, SDL_Event * Event) {
 		if (Keycode == SDLK_Q) State -> GlobalCameraActions.Down = false;
 
 		if (Keycode == SDLK_LSHIFT) State -> GlobalCameraActions.SlowDown = false;
+		if (Keycode == SDLK_LCTRL) State -> GlobalCameraActions.Control = false;
 	}
 
 	if (Event -> type == SDL_EVENT_MOUSE_BUTTON_DOWN) {
@@ -518,6 +612,10 @@ SDL_AppResult SDL_AppEvent(void * App, SDL_Event * Event) {
 		if (Button == SDL_BUTTON_RIGHT) {
 			State -> GlobalCameraActions.MouseLook = true;
 			SDL_SetWindowRelativeMouseMode(State -> Window, true);
+		}
+
+		if (Button == SDL_BUTTON_MIDDLE) {
+			State -> GlobalCameraActions.Middle = true;
 		}
 	}
 
@@ -528,9 +626,13 @@ SDL_AppResult SDL_AppEvent(void * App, SDL_Event * Event) {
 			State -> GlobalCameraActions.MouseLook = false;
 			SDL_SetWindowRelativeMouseMode(State -> Window, false);
 		}
+
+		if (Button == SDL_BUTTON_MIDDLE) {
+			State -> GlobalCameraActions.Middle = false;
+		}
 	}
 
-	if (Event -> type == SDL_EVENT_MOUSE_MOTION && State -> GlobalCameraActions.MouseLook) {
+	if (Event -> type == SDL_EVENT_MOUSE_MOTION) {
 		State -> GlobalCameraActions.MouseDelta.X += Event -> motion.xrel;
 		State -> GlobalCameraActions.MouseDelta.Y += Event -> motion.yrel;
 	}
